@@ -1,19 +1,21 @@
-#Import  a libraries 
 import argparse
 import time
 from pathlib import Path
-import time
+
 import cv2
 import torch
 import torch.backends.cudnn as cudnn
 from numpy import random
+from PIL import Image
 from models.experimental import attempt_load
 from utils.datasets import LoadStreams, LoadImages
 from utils.general import check_img_size, check_requirements, check_imshow, non_max_suppression, apply_classifier, \
     scale_coords, xyxy2xywh, strip_optimizer, set_logging, increment_path
 from utils.plots import plot_one_box
 from utils.torch_utils import select_device, load_classifier, time_synchronized, TracedModel
+
 import numpy as np
+import sys
 import os
 from os import listdir
 import csv
@@ -21,29 +23,29 @@ import string
 from skimage import io
 from PIL import Image 
 import matplotlib.pylab as plt
+
 from scipy.ndimage import rotate
+
 import pytesseract
 custom_oem_psm_config = r'--oem 3 --psm 6'
+
+#import keras_ocr
+
 import time
 
-#Function for postprocessing processes
-def postProcesses(TeeseractText):
-    
-    #Convert all characters of Tesseract Text to capital letter
-    TeeseractText = TeeseractText.upper()
-    
-    #Delete all none alphanumeric characters of Tesseract Text 
-    for char in TeeseractText:
-      if (char.isalpha()==False and char.isnumeric()==False ):
-        TeeseractText = TeeseractText.translate( { ord(char): None } )
-        
-    #Ensure that the Tesseract Text length is not more than seven.
-    while 7<len(TeeseractText):
-      TeeseractText = TeeseractText.rstrip(TeeseractText[-1])
-      
-    return TeeseractText
 
-#Deskew an images
+def postProcesses(s):
+    s= s.upper()
+    
+    for char in s:
+      if (char.isalpha()==False and char.isnumeric()==False ):
+        s = s.translate( { ord(char): None } )
+
+    while 7<len(s):
+      s= s.rstrip(s[-1])
+    
+    return s
+
 def correct_skew(image, delta=1, limit=70):
     def determine_score(arr, angle):
         data = rotate(arr, angle, reshape=False, order=0)
@@ -70,29 +72,19 @@ def correct_skew(image, delta=1, limit=70):
 
     return best_angle, corrected
 
-#Function for preprocessing processes
 def preprocessing(image):
 
-    #Deskew an Image and crop it
-    angle, corrected = correct_skew(image)
-    x,y = corrected.shape[0:2]
-    crop = corrected[2:x-2, 2:y-2] 
-    
-    #Re-size an image
-    image = cv2.resize(crop, None, fx=2.3, fy=1.4, interpolation=cv2.INTER_LINEAR)
-    
-    #Filter an image
-    alpha = 1.5 # Contrast control (1.0-3.0)
-    beta = 1 # Brightness control (0-100)
-    adjusted = cv2.convertScaleAbs(image, alpha=alpha, beta=beta)
-    grayscale = cv2.cvtColor(adjusted, cv2.COLOR_BGR2GRAY)
+    deskewedImage = correct_skew(image)
+    image = cv2.resize(image, None, fx=2.3, fy=1.4, interpolation=cv2.INTER_LINEAR)
+    grayscale = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     image = cv2.GaussianBlur(grayscale, (1, 1),0)
+
     ret2,th2 = cv2.threshold(image,0,255,cv2.THRESH_BINARY+cv2.THRESH_OTSU)
     kernel1 = cv2.getStructuringElement(cv2.MORPH_RECT , (1, 1))
     eroded1 = cv2.erode(th2.copy(), kernel1, iterations = 1)
 
-    #Mask arabic letter
-    mask = cv2.imread("maskArabic (1).jpg",0)
+    ##mask arabic letter
+    mask = cv2.imread("C:/Users/Administrator/yolov7/maskArabic (1).jpg",0)
     maskR = cv2.resize(mask, (eroded1.shape[1],eroded1.shape[0]))
     notMask= np.bitwise_not(maskR)
     ifinalImge = np.bitwise_or(eroded1,notMask)
@@ -101,25 +93,27 @@ def preprocessing(image):
 
 
 def ocr(image):
-    
-    #Use tesseract 
+    '''
+    keras_pipeline = keras_ocr.pipeline.Pipeline()
+    img1 =  [keras_ocr.tools.read (image)]
+    pred = keras_pipeline.recognize (img1)
+    pred_img = pred[0]
+    outOCR = ''
+    for text, box in pred_img:
+      outOCR = outOCR +text
+    '''
     output_tesseract = pytesseract.image_to_string(image, config=custom_oem_psm_config)
-    
-    #Delete all whitespace and newlines from Tesseract text
     outOCR = output_tesseract.translate({ord(c): None for c in string.whitespace})
-    
-    #Apply post-processing on Tesseract text
     text = postProcesses(outOCR)
 
     return text
 
-#function to detect license car plate and recognize alphanumeric of it
 def detect(source0,save_img=False):
     parser = argparse.ArgumentParser()
-    parser.add_argument('--weights', nargs='+', type=str, default='runs/train/yolov7-tiny8/weights/best.pt', help='model.pt path(s)')
+    parser.add_argument('--weights', nargs='+', type=str, default='best.pt', help='model.pt path(s)')
     parser.add_argument('--source', type=str, default=source0, help='source')  # file/folder, 0 for webcam
     parser.add_argument('--img-size', type=int, default=640, help='inference size (pixels)')
-    parser.add_argument('--conf-thres', type=float, default=0.5, help='object confidence threshold')
+    parser.add_argument('--conf-thres', type=float, default=0.25, help='object confidence threshold')
     parser.add_argument('--iou-thres', type=float, default=0.45, help='IOU threshold for NMS')
     parser.add_argument('--device', default='', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
     parser.add_argument('--view-img', action='store_true', help='display results')
@@ -245,7 +239,7 @@ def detect(source0,save_img=False):
                         line = (cls, *xywh, conf) if opt.save_conf else (cls, *xywh)  # label format
                         with open(txt_path + '.txt', 'a') as f:
                             f.write(('%g ' * len(line)).rstrip() % line + '\n')
-                    
+
                     if save_img or view_img:  # Add bbox to image
                         label = f'{names[int(cls)]}'
                         ##crop
@@ -255,9 +249,10 @@ def detect(source0,save_img=False):
                         #cv2.imwrite(save_path, preprocessedImg)
                         ##ocr
                         text = ocr(preprocessedImg) 
+                        time.sleep(2)
                         text = label+": "+text
-                        plot_one_box(xyxy, im0, label=text, color=(142,56,142), line_thickness=3)
-                       
+                        plot_one_box(xyxy, im0, label=text, color=colors[int(cls)], line_thickness=4)
+
             # Print time (inference + NMS)
             print(f'{s}Done. ({(1E3 * (t2 - t1)):.1f}ms) Inference, ({(1E3 * (t3 - t2)):.1f}ms) NMS')
 
@@ -271,7 +266,12 @@ def detect(source0,save_img=False):
                 if dataset.mode == 'image':
                     cv2.imwrite(save_path, im0)
                     print(f" The image with the result is saved in: {save_path}")
-                    
+                    cv2.imshow("Sheep", im0)
+                    cv2.waitKey(0)
+                    sys.exit() # to exit from all the processes
+ 
+                    cv2.destroyAllWindows() # destroy all windows
+
                 else:  # 'video' or 'stream'
                     if vid_path != save_path:  # new video
                         vid_path = save_path
@@ -284,23 +284,33 @@ def detect(source0,save_img=False):
                         else:  # stream
                             fps, w, h = 30, im0.shape[1], im0.shape[0]
                             save_path += '.mp4'
-                            
                         vid_writer = cv2.VideoWriter(save_path, cv2.VideoWriter_fourcc(*'mp4v'), fps, (w, h))
                     vid_writer.write(im0)
-    
+                    #return im0
+    vid_writer.releas()
     if save_txt or save_img:
         s = f"\n{len(list(save_dir.glob('labels/*.txt')))} labels saved to {save_dir / 'labels'}" if save_txt else ''
         #print(f"Results saved to {save_dir}{s}")
-    
-    print(f'Done. ({time.time() - t0:.3f}s)')
 
-    
-      
-    return save_path
+    print(f'Done. ({time.time() - t0:.3f}s)')
+    return im0
 
 if __name__ == '__main__':
 
     with torch.no_grad():
-        detect("inference/images/204683344_0.jpg")
-        
+        detect("C:/Users/Administrator/yolov7/inference/video/IMG_6241.mp4")
     
+    #read the image
+    #im = Image.open(m)
+
+    #show image
+    #m.show()
+    '''
+    with torch.no_grad():
+        if opt.update:  # update all models (to fix SourceChangeWarning)
+            for opt.weights in ['best.pt']:
+                detect()
+                strip_optimizer(opt.weights)
+        else:
+            detect()
+    '''
